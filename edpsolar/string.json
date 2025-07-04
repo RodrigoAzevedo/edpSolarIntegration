@@ -1,0 +1,14 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to EDP Solar",
+        "description": "Enter your EDP Solar account credentials.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    }
+  }
+}
