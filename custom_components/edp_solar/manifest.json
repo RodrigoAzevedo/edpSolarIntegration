@@ -1,8 +1,8 @@
 {
     "domain": "edp_solar",
     "name": "EDP Solar",
-    "config_flow": true,
     "codeowners": ["@RodrigoAzevedo"],
+    "config_flow": true,
     "documentation": "https://your.documentation.url",
     "iot_class": "cloud_push",
     "issue_tracker":"https://github.com/RodrigoAzevedo/edpSolarIntegration/issues",
