@@ -41,6 +41,9 @@ class EdpSolarApi:
         self._stop_event = threading.Event()
         self._mqtt_thread = None
 
+        self.mqttRefresh = 0
+        self.mqqtRefreshPeriod = 20
+
         # Authentication variables
         self.access_token = None
         self.id_token = None
@@ -247,10 +250,11 @@ class EdpSolarApi:
 
         auth(self)
 
+        #User to maintain cognito credentials up to date
         async def periodic_cognito():
             while True:
                 print("Async task executed!")
-                await asyncio.sleep(3600)  # 10 seconds interval
+                await asyncio.sleep(3600)
                 auth(self)
         self.hass.loop.create_task(periodic_cognito())
         
@@ -318,9 +322,9 @@ class EdpSolarApi:
         ca_path = os.path.join(current_dir, 'certificates/AmazonRootCA1.pem')
         
         def custom_disconnect_callback(client, userdata, rc):
-            print(f"Disconnected from AWS IoT Core with result code: {rc}")
+            _LOGGER.debug(f"Disconnected from AWS IoT Core with result code: {rc}")
             if rc != 0:
-                print("Unexpected disconnect. Attempting to reconnect...")
+                _LOGGER.debug("Unexpected disconnect. Attempting to reconnect...")
                 self._mqtt_client.configureIAMCredentials(self.access_key, self.secret_key, self.session_token)
                 self._mqtt_client.connect()
 
@@ -352,7 +356,7 @@ class EdpSolarApi:
                                 self.instant_power_produced = state_vars['emeter:power_aminus']
                         if self.instant_power_produced is not None and self.instant_power_from_grid is not None and self.instant_power_injected is not None:
                             self.instant_power_consumed = self.instant_power_produced + self.instant_power_from_grid - self.instant_power_injected
-                    _LOGGER.debug(f'S: {self.instant_power_produced} G: {self.instant_power_from_grid} T: {self.instant_power_consumed}')
+                    _LOGGER.debug(f'Power Produced: {self.instant_power_produced} Power From Grid: {self.instant_power_from_grid} Power To Grid: {self.instant_power_injected} Total Power Consumed: {self.instant_power_consumed}')
                     if self.hass:
                         asyncio.run_coroutine_threadsafe(
                             self.async_send_signal(), 
@@ -360,7 +364,15 @@ class EdpSolarApi:
                         )
         async def periodic_task():
             while True:
-                print("Async task executed!")
+                #MQTT was disconnecting after about 1 day via web socket handshake failure
+                #refresh period is set to 20 hours, it will disconnect a reconnect to avoid drops
+                #and re-subscribe to topic
+                if self.mqttRefresh == self.mqqtRefreshPeriod:
+                    self._mqtt_client.disconnect()
+                    self._mqtt_client.configureIAMCredentials(self.access_key, self.secret_key, self.session_token)
+                    self._mqtt_client.connect()
+                    subscribeToTopics(self)
+                    self.mqttRefresh = 0
                 # Activate real-time data for all devices
                 for device in self.available_devices.values():
                     activate_msg = {
@@ -371,16 +383,19 @@ class EdpSolarApi:
                     }
                     topic = f'{device["type"]}/{device["deviceLocalId"]}/toDev/realtime'
                     self._mqtt_client.publish(topic, json.dumps(activate_msg), 1)
-                await asyncio.sleep(3600)  # 10 seconds interval
+                self.mqttRefresh += 1
+                await asyncio.sleep(3600)
                 
-                
-        # Subscribe to all device topics        
-        for device in self.available_devices.values():            
-            for topic_type in ["fromDev/realtime", "fromDev/module/changed"]:
-                topic = f'{device["type"]}/{device["deviceLocalId"]}/{topic_type}'
-                self._mqtt_client.subscribe(topic, 1, custom_callback)
-                self._mqtt_client.subscribe(topic, 0, custom_callback)
+        def subscribeToTopics(self):        
+            # Subscribe to all device topics        
+            _LOGGER.critical("aqui")
+            for device in self.available_devices.values():            
+                for topic_type in ["fromDev/realtime", "fromDev/module/changed"]:
+                    topic = f'{device["type"]}/{device["deviceLocalId"]}/{topic_type}'
+                    self._mqtt_client.subscribe(topic, 1, custom_callback)
+                    self._mqtt_client.subscribe(topic, 0, custom_callback)
 
+        subscribeToTopics(self)
         # Activate real-time data for all devices
         self.hass.loop.create_task(periodic_task())
         
