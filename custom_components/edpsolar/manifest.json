@@ -7,5 +7,6 @@
     "requirements": ["boto3>=1.28.0",
     "warrant",
         "AWSIoTPythonSDK>=1.4.9"],
-    "codeowners": ["@yourgithub"]
+    "codeowners": ["@yourgithub"],
+    "issue_tracker":"https://github.com/RodrigoAzevedo/edpSolarIntegration/issues"
 }
