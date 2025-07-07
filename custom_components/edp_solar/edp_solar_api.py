@@ -17,6 +17,8 @@ import os
 import asyncio
 from .devices_enum import DeviceConfig
 from .const import REGION, USER_POOL_ID, ID_USER_POOL, CLIENT_ID, CLIENT_SECRET, IDENTITY_POOL_ID, IOT_HOST
+from riemann_sum import TrapezoidalRiemannSumMulti
+import time
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,6 +39,9 @@ class EdpSolarApi:
         self.available_devices = {}
         self.house_id = None
         self.user_id = None
+        # Calculated variables
+        self._riemann = TrapezoidalRiemannSumMulti()
+        self._riemann_sums = {}
 
         self._stop_event = threading.Event()
         self._mqtt_thread = None
@@ -55,6 +60,10 @@ class EdpSolarApi:
         self.secret_key = None
         self.session_token = None
         self.experiation = None
+    
+    def get_riemann_sums(self):
+    with self._lock:
+        return dict(self._riemann_sums)
 
     def start(self):
         """Start the authentication and MQTT subscription process in a background thread."""
@@ -250,11 +259,10 @@ class EdpSolarApi:
 
         auth(self)
 
-        #User to maintain cognito credentials up to date
         async def periodic_cognito():
             while True:
                 print("Async task executed!")
-                await asyncio.sleep(3600)
+                await asyncio.sleep(3600)  # 10 seconds interval
                 auth(self)
         self.hass.loop.create_task(periodic_cognito())
         
@@ -322,9 +330,9 @@ class EdpSolarApi:
         ca_path = os.path.join(current_dir, 'certificates/AmazonRootCA1.pem')
         
         def custom_disconnect_callback(client, userdata, rc):
-            _LOGGER.debug(f"Disconnected from AWS IoT Core with result code: {rc}")
+            print(f"Disconnected from AWS IoT Core with result code: {rc}")
             if rc != 0:
-                _LOGGER.debug("Unexpected disconnect. Attempting to reconnect...")
+                print("Unexpected disconnect. Attempting to reconnect...")
                 self._mqtt_client.configureIAMCredentials(self.access_key, self.secret_key, self.session_token)
                 self._mqtt_client.connect()
 
@@ -345,18 +353,32 @@ class EdpSolarApi:
                         break  # Exit loop after first match
                 if device is not None:
                     state_vars = payload['data'][0].get('stateVariables', {})
+                    now_ts = time.time()
                     with self._lock:
                         if device["device_type"] == DeviceConfig.GRID.name:
                             if 'emeter:power_aminus' in state_vars:
                                 self.instant_power_injected = state_vars['emeter:power_aminus']
+                                val = getattr(self, "instant_power_injected", None)
+                                sum_val = self._riemann.add_point("instant_power_injected", now_ts, val)
+                                self._riemann_sums["instant_power_injected"] = sum_val
                             if 'emeter:power_aplus' in state_vars:
                                 self.instant_power_from_grid = state_vars['emeter:power_aplus']
+                                val = getattr(self, "instant_power_from_grid", None)
+                                sum_val = self._riemann.add_point("instant_power_from_grid", now_ts, val)
+                                self._riemann_sums["instant_power_from_grid"] = sum_val
                         if device["device_type"] == DeviceConfig.PRODUCTION.name:
                             if 'emeter:power_aminus' in state_vars:
                                 self.instant_power_produced = state_vars['emeter:power_aminus']
+                                val = getattr(self, "instant_power_produced", None)
+                                sum_val = self._riemann.add_point("instant_power_produced", now_ts, val)
+                                self._riemann_sums["instant_power_produced"] = sum_val
                         if self.instant_power_produced is not None and self.instant_power_from_grid is not None and self.instant_power_injected is not None:
                             self.instant_power_consumed = self.instant_power_produced + self.instant_power_from_grid - self.instant_power_injected
-                    _LOGGER.debug(f'Power Produced: {self.instant_power_produced} Power From Grid: {self.instant_power_from_grid} Power To Grid: {self.instant_power_injected} Total Power Consumed: {self.instant_power_consumed}')
+                            val = getattr(self, "instant_power_consumed", None)
+                            sum_val = self._riemann.add_point("instant_power_consumed", now_ts, val)
+                            self._riemann_sums["instant_power_consumed"] = sum_val
+                    _LOGGER.debug(f'S: {self.instant_power_produced} G: {self.instant_power_from_grid} T: {self.instant_power_consumed}')
+                    
                     if self.hass:
                         asyncio.run_coroutine_threadsafe(
                             self.async_send_signal(), 
@@ -364,9 +386,7 @@ class EdpSolarApi:
                         )
         async def periodic_task():
             while True:
-                #MQTT was disconnecting after about 1 day via web socket handshake failure
-                #refresh period is set to 20 hours, it will disconnect a reconnect to avoid drops
-                #and re-subscribe to topic
+                print("Async task executed!")
                 if self.mqttRefresh == self.mqqtRefreshPeriod:
                     self._mqtt_client.disconnect()
                     self._mqtt_client.configureIAMCredentials(self.access_key, self.secret_key, self.session_token)
@@ -384,7 +404,7 @@ class EdpSolarApi:
                     topic = f'{device["type"]}/{device["deviceLocalId"]}/toDev/realtime'
                     self._mqtt_client.publish(topic, json.dumps(activate_msg), 1)
                 self.mqttRefresh += 1
-                await asyncio.sleep(3600)
+                await asyncio.sleep(3600)  # 10 seconds interval
                 
         def subscribeToTopics(self):        
             # Subscribe to all device topics        
@@ -394,9 +414,7 @@ class EdpSolarApi:
                     topic = f'{device["type"]}/{device["deviceLocalId"]}/{topic_type}'
                     self._mqtt_client.subscribe(topic, 1, custom_callback)
                     self._mqtt_client.subscribe(topic, 0, custom_callback)
-
         subscribeToTopics(self)
-        # Activate real-time data for all devices
         self.hass.loop.create_task(periodic_task())
         
         # Keep MQTT running
@@ -414,4 +432,8 @@ class EdpSolarApi:
                 "available_device_ids": list(self.available_device_ids),
                 "house_id": self.house_id,
                 "user_id": self.user_id,
+                "energy_produced": self.get_riemann_sums().get("instant_power_produced"),
+                "energy_consumed": self.get_riemann_sums().get("instant_power_consumed"),
+                "energy_from_grid": self.get_riemann_sums().get("instant_power_from_grid"),
+                "energy_injected": self.get_riemann_sums().get("instant_power_injected"),
             }

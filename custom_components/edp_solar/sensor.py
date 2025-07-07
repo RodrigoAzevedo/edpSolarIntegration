@@ -20,6 +20,10 @@ async def async_setup_entry(hass, entry, async_add_entities):
         EdpSolarAvailableDeviceIdsSensor(api),
         EdpSolarHouseIdSensor(api),
         EdpSolarUserIdSensor(api),
+        EdpSolarEnergyProducedSensor(api),
+        EdpSolarEnergyConsumedSensor(api),
+        EdpSolarEnergyInjectedSensor(api),
+        EdpSolarEnergyFromGridSensor(api),
     ]
     async_add_entities(sensors)
 
@@ -110,3 +114,47 @@ class EdpSolarUserIdSensor(EdpSolarBaseSensor):
     @property
     def native_value(self):
         return self.api.get_values().get("user_id")
+
+class EdpSolarEnergyProducedSensor(EdpSolarBaseSensor):
+    _attr_name = "Energy Produced"
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_icon = "mdi:solar-power"
+    _attr_unique_id = "edp_solar_energy_produced"
+
+    @property
+    def native_value(self):
+        ws = self.api.get_values().get("energy_produced")
+        return ws / 3600 if ws is not None else None
+
+class EdpSolarEnergyConsumedSensor(EdpSolarBaseSensor):
+    _attr_name = "Energy Consumed"
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_icon = "mdi:flash"
+    _attr_unique_id = "edp_solar_energy_consumed"
+
+    @property
+    def native_value(self):
+        ws = self.api.get_values().get("energy_consumed")
+        return ws / 3600 if ws is not None else None
+
+class EdpSolarEnergyInjectedSensor(EdpSolarBaseSensor):
+    _attr_name = "Energy Injected"
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_icon = "mdi:transmission-tower-export"
+    _attr_unique_id = "edp_solar_energy_injected"
+
+    @property
+    def native_value(self):
+        ws = self.api.get_values().get("energy_injected")
+        return ws / 3600 if ws is not None else None
+
+class EdpSolarEnergyFromGridSensor(EdpSolarBaseSensor):
+    _attr_name = "Energy From Grid"
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_icon = "mdi:transmission-tower"
+    _attr_unique_id = "edp_solar_energy_from_grid"
+
+    @property
+    def native_value(self):
+        ws = self.api.get_values().get("energy_from_grid")
+        return ws / 3600 if ws is not None else None
