@@ -6,8 +6,8 @@
     "documentation": "https://your.documentation.url",
     "iot_class": "cloud_push",
     "issue_tracker":"https://github.com/RodrigoAzevedo/edpSolarIntegration/issues",
-    "version": "1.0.0",
     "requirements": ["boto3>=1.28.0",
     "warrant",
-        "AWSIoTPythonSDK>=1.4.9"]
+        "AWSIoTPythonSDK>=1.4.9"],
+    "version": "1.0.0"
 }
