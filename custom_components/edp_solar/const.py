@@ -1,4 +1,5 @@
 DOMAIN = "edp_solar"
+# Configurations for EDP Solar server access
 REGION = "eu-west-1"
 USER_POOL_ID = "eu-west-1_7qre3K7aN"
 ID_USER_POOL = "eu-west-1_CZc7dNRRv"
