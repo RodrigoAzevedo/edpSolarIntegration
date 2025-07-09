@@ -15,6 +15,7 @@ from AWSIoTPythonSDK.MQTTLib import AWSIoTMQTTClient
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 import os
 import asyncio
+import functools
 from .devices_enum import DeviceConfig
 from .const import REGION, USER_POOL_ID, ID_USER_POOL, CLIENT_ID, CLIENT_SECRET, IDENTITY_POOL_ID, IOT_HOST
 
@@ -71,7 +72,9 @@ class EdpSolarApi:
 
     def _run(self):
         try:
-            self._authenticate_and_subscribe()
+            self.hass.loop.call_soon_threadsafe(
+                lambda: self.hass.async_create_task(self._authenticate_and_subscribe())
+            )
         except Exception as ex:
             _LOGGER.error("EDP Solar API thread crashed: %s", ex, exc_info=True)
 
@@ -82,11 +85,9 @@ class EdpSolarApi:
         except Exception as e:
             _LOGGER.error("Signal dispatch failed: %s", e)
 
-    def _authenticate_and_subscribe(self):
-        # --- AWS Cognito and API constants ---
-
-        # --- Helper functions ---
-        def get_secret_hash(username, client_id, client_secret):
+    # --- Helper functions ---
+    @staticmethod
+    def get_secret_hash(username, client_id, client_secret):
             message = username + client_id
             dig = hmac.new(
                 client_secret.encode('utf-8'),
@@ -94,8 +95,8 @@ class EdpSolarApi:
                 digestmod=hashlib.sha256
             ).digest()
             return base64.b64encode(dig).decode()
-
-        def generate_random_device_password(length=16):
+    @staticmethod
+    def generate_random_device_password(length=16):
             letters = string.ascii_letters
             digits = string.digits
             symbols = '!@#$%^&*()_+-=[]{}|;:,.<>?'
@@ -107,8 +108,8 @@ class EdpSolarApi:
             ] + [secrets.choice(all_chars) for _ in range(length-3)]
             secrets.SystemRandom().shuffle(password)
             return ''.join(password)
-
-        def generate_device_secret_verifier(username, device_key, device_group_key, device_password, pool_id, client_id, client):
+    @staticmethod
+    def generate_device_secret_verifier(username, device_key, device_group_key, device_password, pool_id, client_id, client):
             device_and_pw = f"{device_group_key}{device_key}:{device_password}"
             device_and_pw_hash = hash_sha256(device_and_pw.encode("utf-8"))
             salt = pad_hex(get_random(16))
@@ -126,13 +127,14 @@ class EdpSolarApi:
                 "Salt": base64.standard_b64encode(bytearray.fromhex(salt)).decode("utf-8"),
             }
         
-        def auth(self):
+    def auth(self):
             # --- Step 1: Cognito Authentication ---
             _LOGGER.debug("Starting auth")
             cognito_idp = boto3.client('cognito-idp', region_name=REGION)
+            #cognito_idp = await self.hass.async_add_executor_job(functools.partial(boto3.client, 'cognito-idp', region_name=REGION))
             cognito_identity = boto3.client('cognito-identity', region_name=REGION)
-
-            secret_hash = get_secret_hash(self.username, CLIENT_ID, CLIENT_SECRET)
+            #cognito_identity = await self.hass.async_add_executor_job(functools.partial(boto3.client, 'cognito-identity', region_name=REGION))
+            secret_hash = EdpSolarApi.get_secret_hash(self.username, CLIENT_ID, CLIENT_SECRET)
             auth_response = cognito_idp.initiate_auth(
                 AuthFlow='USER_PASSWORD_AUTH',
                 AuthParameters={
@@ -150,8 +152,8 @@ class EdpSolarApi:
                 self.device_group_key = auth_response['AuthenticationResult']['NewDeviceMetadata']['DeviceGroupKey']
                 self.experiation = auth_response['AuthenticationResult']['ExpiresIn']
 
-            device_secret_verifier = generate_device_secret_verifier(
-                self.username, self.device_key, self.device_group_key, generate_random_device_password(),
+            device_secret_verifier = EdpSolarApi.generate_device_secret_verifier(
+                self.username, self.device_key, self.device_group_key, EdpSolarApi.generate_random_device_password(),
                 USER_POOL_ID, CLIENT_ID, cognito_idp
             )
             cognito_idp.confirm_device(
@@ -192,7 +194,7 @@ class EdpSolarApi:
             )
 
             # 5. InitiateAuth again (using username and password)
-            secret_hash = get_secret_hash(self.user_id, CLIENT_ID, CLIENT_SECRET)
+            secret_hash = EdpSolarApi.get_secret_hash(self.user_id, CLIENT_ID, CLIENT_SECRET)
             auth_response2 = cognito_idp.initiate_auth(
                 AuthFlow='USER_PASSWORD_AUTH',
                 AuthParameters={
@@ -208,10 +210,9 @@ class EdpSolarApi:
                 self.refresh_token = auth_response2['AuthenticationResult']['RefreshToken']
                 self.device_key = auth_response2['AuthenticationResult']['NewDeviceMetadata']['DeviceKey']
                 self.device_group_key = auth_response2['AuthenticationResult']['NewDeviceMetadata']['DeviceGroupKey']
-
             # 7. ConfirmDevice again
-            device_secret_verifier = generate_device_secret_verifier(
-                self.user_id, self.device_key, self.device_group_key, generate_random_device_password(),
+            device_secret_verifier = EdpSolarApi.generate_device_secret_verifier(
+                self.user_id, self.device_key, self.device_group_key, EdpSolarApi.generate_random_device_password(),
                 USER_POOL_ID, CLIENT_ID, cognito_idp
             )
 
@@ -247,48 +248,46 @@ class EdpSolarApi:
             user_response = cognito_idp.get_user(
                 AccessToken=self.access_token
             )
-
-        auth(self)
-
-        #User to maintain cognito credentials up to date
-        async def periodic_cognito():
+        
+    #Used to maintain cognito credentials up to date
+    async def periodic_cognito(self):
             while True:
                 print("Async task executed!")
                 await asyncio.sleep(3600)
-                auth(self)
-        self.hass.loop.create_task(periodic_cognito())
+                await self.hass.async_add_executor_job(self.auth)
         
-        _LOGGER.debug("Retrieving Houses")
+    async def _async_retrieve_devices_and_modules(self):
+            _LOGGER.debug("Retrieving Houses")
+            loop = asyncio.get_running_loop()
+            # Step 4: Get House ID
+            url = 'https://uiapi.emcp.edp.com/equipment/houses'
+            headers = {
+                'Accept-Encoding': 'gzip',
+                'Authorization': self.id_token,
+                'Connection': 'Keep-Alive',
+                'Content-Type': 'application/json',
+                'Host': 'uiapi.emcp.edp.com',
+                'User-Agent': 'okhttp/5.0.0-alpha.14'
+            }
+            response = await loop.run_in_executor(None, functools.partial(requests.get, url,headers = headers))#requests.get(url,headers= headers) #
+            house = response.json()
+            house_id = house["houses"][0]["houseId"]
 
-        # Step 4: Get House ID
-        url = 'https://uiapi.emcp.edp.com/equipment/houses'
-        headers = {
-            'Accept-Encoding': 'gzip',
-            'Authorization': self.id_token,
-            'Connection': 'Keep-Alive',
-            'Content-Type': 'application/json',
-            'Host': 'uiapi.emcp.edp.com',
-            'User-Agent': 'okhttp/5.0.0-alpha.14'
-        }
-        response = requests.get(url, headers=headers)
-        house = response.json()
-        house_id = house["houses"][0]["houseId"]
+            # Step 5: Get Devices and Modules
+            _LOGGER.debug("Retrieving Devices")
+            url = f'https://uiapi.emcp.edp.com/equipment/houses/{house_id}/device'
+            devices_response = await loop.run_in_executor(None, functools.partial(requests.get, url,headers = headers))
+            devices = devices_response.json()
 
-        # Step 5: Get Devices and Modules
-        _LOGGER.debug("Retrieving Devices")
-        url = f'https://uiapi.emcp.edp.com/equipment/houses/{house_id}/device'
-        devices_response = requests.get(url, headers=headers)
-        devices = devices_response.json()
+            device_ids = [device["deviceLocalId"] for device in devices]
+            #device_deviceId[device["deviceId"]: device for device in devices]
 
-        device_ids = [device["deviceLocalId"] for device in devices]
-        #device_deviceId[device["deviceId"]: device for device in devices]
-
-        url = f'https://uiapi.emcp.edp.com/equipment/houses/{house_id}/modules'
-        modules_response = requests.get(url, headers=headers)
-        modules = modules_response.json()
-        module_map = {module['deviceId']: module for module in modules['Modules']}
-        available_devices = {}
-        for device in devices:                
+            url = f'https://uiapi.emcp.edp.com/equipment/houses/{house_id}/modules'
+            modules_response = await loop.run_in_executor(None, functools.partial(requests.get, url,headers = headers))
+            modules = modules_response.json()
+            module_map = {module['deviceId']: module for module in modules['Modules']}
+            available_devices = {}
+            for device in devices:                
                 device_id = device['deviceId']
                 module = module_map.get(device_id)
                 device_type = DeviceConfig.NOT_CONFIGURED.name
@@ -307,35 +306,35 @@ class EdpSolarApi:
                         "serialNumber": module.get('serialNumber')
                     }
 
-        #device_ids = [device["deviceLocalId"] for device in devices]
-        _LOGGER.debug(available_devices)
-        # Store state
-        with self._lock:
-            self.available_device_ids = device_ids
-            self.available_devices = available_devices
-            self.house_id = house_id
-            #self.user_id = user_id
+            #device_ids = [device["deviceLocalId"] for device in devices]
+            _LOGGER.debug(available_devices)
+            # Store state
+            with self._lock:
+                self.available_device_ids = device_ids
+                self.available_devices = available_devices
+                self.house_id = house_id
+                #self.user_id = user_id
 
-        _LOGGER.debug("Starting MQTT")
-        # Step 6: Setup MQTT
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        ca_path = os.path.join(current_dir, 'certificates/AmazonRootCA1.pem')
-        
-        def custom_disconnect_callback(client, userdata, rc):
+    def custom_disconnect_callback(client, userdata, rc):
             _LOGGER.debug(f"Disconnected from AWS IoT Core with result code: {rc}")
             if rc != 0:
                 _LOGGER.debug("Unexpected disconnect. Attempting to reconnect...")
                 self._mqtt_client.configureIAMCredentials(self.access_key, self.secret_key, self.session_token)
                 self._mqtt_client.connect()
 
-        mqtt_client = AWSIoTMQTTClient(str(uuid.uuid4()), useWebsocket=True)
-        mqtt_client.configureEndpoint(IOT_HOST, 443)
-        mqtt_client.configureCredentials(ca_path)
-        mqtt_client.configureIAMCredentials(self.access_key, self.secret_key, self.session_token)
-        mqtt_client.connect()
-        self._mqtt_client = mqtt_client
+    def _setup_mqtt(self):
+            _LOGGER.debug("Starting MQTT")
+            # Step 6: Setup MQTT
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            ca_path = os.path.join(current_dir, 'certificates/AmazonRootCA1.pem')
+            mqtt_client = AWSIoTMQTTClient(str(uuid.uuid4()), useWebsocket=True)
+            mqtt_client.configureEndpoint(IOT_HOST, 443)
+            mqtt_client.configureCredentials(ca_path)
+            mqtt_client.configureIAMCredentials(self.access_key, self.secret_key, self.session_token)
+            mqtt_client.connect()
+            self._mqtt_client = mqtt_client
 
-        def custom_callback(client, userdata, message):
+    def custom_callback(self, client, userdata, message):
             payload = json.loads(message.payload.decode())
             if message.topic.endswith("/fromDev/realtime") and 'data' in payload and len(payload['data']) > 0:
                 device = None
@@ -362,7 +361,7 @@ class EdpSolarApi:
                             self.async_send_signal(), 
                             self.hass.loop
                         )
-        async def periodic_task():
+    async def periodic_task(self):
             while True:
                 #MQTT was disconnecting after about 1 day via web socket handshake failure
                 #refresh period is set to 20 hours, it will disconnect a reconnect to avoid drops
@@ -386,22 +385,32 @@ class EdpSolarApi:
                 self.mqttRefresh += 1
                 await asyncio.sleep(3600)
                 
-        def subscribeToTopics(self):        
-            # Subscribe to all device topics        
-            _LOGGER.critical("aqui")
+    def subscribeToTopics(self):        
+            # Subscribe to all device topics
             for device in self.available_devices.values():            
                 for topic_type in ["fromDev/realtime", "fromDev/module/changed"]:
                     topic = f'{device["type"]}/{device["deviceLocalId"]}/{topic_type}'
-                    self._mqtt_client.subscribe(topic, 1, custom_callback)
-                    self._mqtt_client.subscribe(topic, 0, custom_callback)
+                    self._mqtt_client.subscribe(topic, 1, self.custom_callback)
+                    self._mqtt_client.subscribe(topic, 0, self.custom_callback)
 
-        subscribeToTopics(self)
+    async def async_authenticate_and_subscribe(self):
+        """Main entrypoint: runs all blocking code in executor."""
+        await self.hass.async_add_executor_job(self.auth)
+        await self._async_retrieve_devices_and_modules()
+        await self.hass.async_add_executor_job(self._setup_mqtt)
+        self.hass.loop.create_task(self.periodic_cognito())
+        self.hass.loop.create_task(self.periodic_task())
+
+    async def _authenticate_and_subscribe(self):
+        await self.async_authenticate_and_subscribe()
+
+        self.subscribeToTopics()
         # Activate real-time data for all devices
-        self.hass.loop.create_task(periodic_task())
+        #self.hass.loop.create_task(self.periodic_task())
         
         # Keep MQTT running
-        while not self._stop_event.is_set():
-            time.sleep(1)
+        #while not self._stop_event.is_set():
+        #    await asyncio.sleep(1)
 
     def get_values(self):
         """Thread-safe retrieval of all sensor values."""
