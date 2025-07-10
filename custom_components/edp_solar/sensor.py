@@ -1,5 +1,5 @@
 from homeassistant.components.sensor import SensorEntity
-from homeassistant.const import UnitOfPower
+from homeassistant.const import UnitOfPower, UnitOfEnergy
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from .const import DOMAIN
 import logging
@@ -20,6 +20,10 @@ async def async_setup_entry(hass, entry, async_add_entities):
         EdpSolarAvailableDeviceIdsSensor(api),
         EdpSolarHouseIdSensor(api),
         EdpSolarUserIdSensor(api),
+        EdpSolarEnergyConsumed(api),
+        EdpSolarEnergyFromGrid(api),
+        EdpSolarEnergyInjected(api),
+        EdpSolarEnergyProduced(api),
     ]
     async_add_entities(sensors)
 
@@ -110,3 +114,47 @@ class EdpSolarUserIdSensor(EdpSolarBaseSensor):
     @property
     def native_value(self):
         return self.api.get_values().get("user_id")
+
+class EdpSolarEnergyConsumed(EdpSolarBaseSensor):
+    _attr_name = "Energy Consumed"
+    _attr_native_unit_of_measurement = UnitOfEnergy.WATT_HOUR
+    _attr_icon = "mdi:flash"
+    _attr_unique_id = "edp_solar_energy_consumed"
+
+    @property
+    def native_value(self):
+        ws = self.api.get_values().get("energy_consumed")
+        return ws / 3600 if ws is not None else None  # Convert to Wh if desired
+
+class EdpSolarEnergyFromGrid(EdpSolarBaseSensor):
+    _attr_name = "Energy From Grid"
+    _attr_native_unit_of_measurement = UnitOfEnergy.WATT_HOUR
+    _attr_icon = "mdi:transmission-tower"
+    _attr_unique_id = "edp_solar_energy_from_grid"
+
+    @property
+    def native_value(self):
+        ws = self.api.get_values().get("energy_from_grid")
+        return ws / 3600 if ws is not None else None  # Convert to Wh if desired
+
+class EdpSolarEnergyInjected(EdpSolarBaseSensor):
+    _attr_name = "Energy Injected"
+    _attr_native_unit_of_measurement = UnitOfEnergy.WATT_HOUR
+    _attr_icon =  "mdi:transmission-tower-export"
+    _attr_unique_id = "edp_solar_energy_injected"
+
+    @property
+    def native_value(self):
+        ws = self.api.get_values().get("energy_injected")
+        return ws / 3600 if ws is not None else None  # Convert to Wh if desired
+
+class EdpSolarEnergyProduced(EdpSolarBaseSensor):
+    _attr_name = "Energy Produced"
+    _attr_native_unit_of_measurement = UnitOfEnergy.WATT_HOUR
+    _attr_icon = "mdi:solar-power"
+    _attr_unique_id = "edp_solar_energy_produced"
+
+    @property
+    def native_value(self):
+        ws = self.api.get_values().get("energy_produced")
+        return ws / 3600 if ws is not None else None  # Convert to Wh if desired
