@@ -14,10 +14,17 @@ The integration is done to support my needs in Home Assistant and is not in any 
 ### What the integration provides
 
 Available Sensors:
-- Instant Power Produced (sensor.edp_solar_instant_power_produced): Instant Power (Watts) Produced by the Solar Panel 
-- Instant Power Injected (sensor.edp_solar_instant_power_injected): Instant Power (Watts) Injected to the Grid from produced power
-- Instant Power From Grid (sensor.edp_solar_instant_power_from_grid): Instant Power (Watts) Consumed From the Grid to cover consumption over production
-- Instant Power Consumed (sensor.edp_solar_instant_power_consumed): Calculated by summing Instant Power Produced and From Grid and subtracting Injected
-- House Id (sensor.edp_solar_house_id): House Id in EDP Solar system, used to retrive information, automatically retrieved from requests
-- User Id (sensor.edp_solar_user_id): User Id in EDP Solar system, used to retrive information, automatically retrieved from requests
-- Device Ids (sensor.edp_solar_available_device_ids): list of Ids of the avaible devices within your EDP Solar setup, used to retrive information, automatically retrieved from requests
+
+| Name | Sensor Name | Value Origin | Units | Value Meaning |
+| :--- | :---: | :---: | :---: | :--- |
+| Instant Power Produced | sensor.edp_solar_instant_power_produced | Direct Read | W | Instant Power (Watts) Produced by the Solar Panel |
+| Instant Power Injected | sensor.edp_solar_instant_power_injected | Direct Read | W | Instant Power (Watts) Injected to the Grid from produced power |
+| Instant Power From Grid | sensor.edp_solar_instant_power_from_grid | Direct Read | W | Instant Power (Watts) Consumed From the Grid to cover consumption over production |
+| Instant Power Consumed | sensor.edp_solar_instant_power_consumed | Calculated | W | Calculated by summing Instant Power Produced and From Grid and subtracting Injected |
+| Energy Produced | sensor.edp_solar_energy_produced | Calculated | Wh | Energy (watt-hour) Produced by the Solar Panel, calculated via Trapzoidal Riemann Sum |
+| Energy Injected | sensor.edp_solar_energy_injected | Calculated | Wh | Energy (watt-hour) Injected to the Grid from produced power, calculated via Trapzoidal Riemann Sum  |
+| Energy From Grid | sensor.edp_solar_energy_from_grid | Calculated | Wh | Energy (watt-hour) Consumed From the Grid, calculated via Trapzoidal Riemann Sum  |
+| Energy Consumed | sensor.edp_solar_energy_consumed | Calculated | Wh | Energy (watt-hour) Consumed, calculated via Trapzoidal Riemann Sum  |
+| House Id | sensor.edp_solar_house_id | N.A. | N.A. | House Id in EDP Solar system, used to retrive information, automatically retrieved from requests |
+| User Id | sensor.edp_solar_user_id | N.A. | N.A. | User Id in EDP Solar system, used to retrive information, automatically retrieved from requests |
+| Device Ids | sensor.edp_solar_available_device_ids | N.A. | N.A. | list of Ids of the avaible devices within your EDP Solar setup, used to retrive information, automatically retrieved from requests |

@@ -16,8 +16,10 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 import os
 import asyncio
 import functools
+import time
 from .devices_enum import DeviceConfig
 from .const import REGION, USER_POOL_ID, ID_USER_POOL, CLIENT_ID, CLIENT_SECRET, IDENTITY_POOL_ID, IOT_HOST
+from .trapezoidal_riemann_sum import TrapezoidalRiemannSum
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,6 +40,11 @@ class EdpSolarApi:
         self.available_devices = {}
         self.house_id = None
         self.user_id = None
+        
+        self.energy_consumed = TrapezoidalRiemannSum()
+        self.energy_produced = TrapezoidalRiemannSum()
+        self.energy_from_grid = TrapezoidalRiemannSum()
+        self.energy_injected = TrapezoidalRiemannSum()
 
         self._stop_event = threading.Event()
         self._mqtt_thread = None
@@ -343,18 +350,23 @@ class EdpSolarApi:
                         device = self.available_devices[key]
                         break  # Exit loop after first match
                 if device is not None:
+                    current_time = time.time()
                     state_vars = payload['data'][0].get('stateVariables', {})
                     with self._lock:
                         if device["device_type"] == DeviceConfig.GRID.name:
                             if 'emeter:power_aminus' in state_vars:
                                 self.instant_power_injected = state_vars['emeter:power_aminus']
+                                self.energy_injected.add_point(current_time, self.instant_power_injected)
                             if 'emeter:power_aplus' in state_vars:
                                 self.instant_power_from_grid = state_vars['emeter:power_aplus']
+                                self.energy_from_grid.add_point(current_time, self.instant_power_from_grid)
                         if device["device_type"] == DeviceConfig.PRODUCTION.name:
                             if 'emeter:power_aminus' in state_vars:
                                 self.instant_power_produced = state_vars['emeter:power_aminus']
+                                self.energy_produced.add_point(current_time, self.instant_power_produced)
                         if self.instant_power_produced is not None and self.instant_power_from_grid is not None and self.instant_power_injected is not None:
                             self.instant_power_consumed = self.instant_power_produced + self.instant_power_from_grid - self.instant_power_injected
+                            self.energy_consumed.add_point(current_time, self.instant_power_consumed)
                     _LOGGER.debug(f'Power Produced: {self.instant_power_produced} Power From Grid: {self.instant_power_from_grid} Power To Grid: {self.instant_power_injected} Total Power Consumed: {self.instant_power_consumed}')
                     if self.hass:
                         asyncio.run_coroutine_threadsafe(
@@ -423,4 +435,8 @@ class EdpSolarApi:
                 "available_device_ids": list(self.available_device_ids),
                 "house_id": self.house_id,
                 "user_id": self.user_id,
+                "energy_consumed": self.energy_consumed.get_sum(),
+                "energy_injected": self.energy_injected.get_sum(),
+                "energy_from_grid": self.energy_from_grid.get_sum(),
+                "energy_produced": self.energy_produced.get_sum()
             }

@@ -3,7 +3,7 @@
     "name": "EDP Solar",
     "codeowners": ["@RodrigoAzevedo"],
     "config_flow": true,
-    "documentation": "https://your.documentation.url",
+    "documentation": "https://github.com/RodrigoAzevedo/edpSolarIntegration",
     "iot_class": "cloud_push",
     "issue_tracker":"https://github.com/RodrigoAzevedo/edpSolarIntegration/issues",
     "requirements": ["boto3>=1.28.0",
