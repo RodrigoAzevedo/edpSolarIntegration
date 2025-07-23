@@ -50,7 +50,7 @@ class EdpSolarApi:
         self._mqtt_thread = None
 
         self.mqttRefresh = 0
-        self.mqqtRefreshPeriod = 20
+        self.mqqtRefreshPeriod = 600
 
         # Authentication variables
         self.access_token = None
@@ -373,30 +373,6 @@ class EdpSolarApi:
                             self.async_send_signal(), 
                             self.hass.loop
                         )
-    async def periodic_task(self):
-            while True:
-                #MQTT was disconnecting after about 1 day via web socket handshake failure
-                #refresh period is set to 20 hours, it will disconnect a reconnect to avoid drops
-                #and re-subscribe to topic
-                if self.mqttRefresh == self.mqqtRefreshPeriod:
-                    self._mqtt_client.disconnect()
-                    self._mqtt_client.configureIAMCredentials(self.access_key, self.secret_key, self.session_token)
-                    self._mqtt_client.connect()
-                    subscribeToTopics(self)
-                    self.mqttRefresh = 0
-                # Activate real-time data for all devices
-                for device in self.available_devices.values():
-                    activate_msg = {
-                        "id": str(uuid.uuid4()),
-                        "operationType": "realtime",
-                        "messageType": "request",
-                        "data": {"timeout": 3600}
-                    }
-                    topic = f'{device["type"]}/{device["deviceLocalId"]}/toDev/realtime'
-                    self._mqtt_client.publish(topic, json.dumps(activate_msg), 1)
-                self.mqttRefresh += 1
-                await asyncio.sleep(3600)
-                
     def subscribeToTopics(self):        
             # Subscribe to all device topics
             for device in self.available_devices.values():            
@@ -404,6 +380,50 @@ class EdpSolarApi:
                     topic = f'{device["type"]}/{device["deviceLocalId"]}/{topic_type}'
                     self._mqtt_client.subscribe(topic, 1, self.custom_callback)
                     self._mqtt_client.subscribe(topic, 0, self.custom_callback)
+
+    async def periodic_task(self):
+            while True:
+                try:
+                    #MQTT was disconnecting after about 1 day via web socket handshake failure
+                    #refresh period is set to 20 hours, it will disconnect a reconnect to avoid drops
+                    #and re-subscribe to topic
+                    if self.mqttRefresh == self.mqqtRefreshPeriod:
+                        _LOGGER.debug("Disconnecting MQTT")
+                        await self.hass.async_add_executor_job(self._mqtt_client.disconnect)
+                        _LOGGER.debug("Reconnecting MQTT")
+                        await self.hass.async_add_executor_job(self._setup_mqtt)
+                        await self.hass.async_add_executor_job(self.subscribeToTopics)
+                        self.mqttRefresh = 0
+                    # Activate real-time data for all devices
+                    for device in self.available_devices.values():
+                        activate_msg = {
+                            "id": str(uuid.uuid4()),
+                            "operationType": "realtime",
+                            "messageType": "request",
+                            "data": {"timeout": 60}
+                        }
+                        topic = f'{device["type"]}/{device["deviceLocalId"]}/toDev/realtime'
+                        _LOGGER.debug("Republishing message request MQTT")
+                        self._mqtt_client.publish(topic, json.dumps(activate_msg), 1)
+                    self.mqttRefresh += 1
+                except:
+                    _LOGGER.critical("Error detected, disconnecting & reconnecting MQTT")
+                    await self.hass.async_add_executor_job(self._mqtt_client.disconnect)
+                    await self.hass.async_add_executor_job(self._setup_mqtt)
+                    await self.hass.async_add_executor_job(self.subscribeToTopics)
+                    self.mqttRefresh = 0
+                    # Activate real-time data for all devices
+                    for device in self.available_devices.values():
+                        activate_msg = {
+                            "id": str(uuid.uuid4()),
+                            "operationType": "realtime",
+                            "messageType": "request",
+                            "data": {"timeout": 60}
+                        }
+                        topic = f'{device["type"]}/{device["deviceLocalId"]}/toDev/realtime'
+                        _LOGGER.debug("Republishing message request MQTT")
+                        self._mqtt_client.publish(topic, json.dumps(activate_msg), 1)
+                await asyncio.sleep(60)
 
     async def async_authenticate_and_subscribe(self):
         """Main entrypoint: runs all blocking code in executor."""
