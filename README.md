@@ -13,7 +13,9 @@ The integration is done to support my needs in Home Assistant and is not in any 
 
 ### What the integration provides
 
-Available Sensors:
+Integration creates a Device called **EDP Solar** with several available sensor entities.
+
+#### Currently Available Sensors
 
 | Name | Sensor Name | Value Origin | Units | Value Meaning |
 | :--- | :---: | :---: | :---: | :--- |
